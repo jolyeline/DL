@@ -1,2 +1,9 @@
-scipy
-matplotlib
+numpy==1.26.4
+pandas==2.2.2
+scipy==1.13.0
+matplotlib==3.9.0
+scikit-learn==1.5.0
+seaborn==0.13.2
+tensorflow==2.16.1
+ipykernel
+
