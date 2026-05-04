@@ -1,0 +1,137 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
+%Template version as of 6/27/2024
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{xurl}
+\usepackage{cleveref}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\begin{document}
+
+\title{Deep Learning: Assignment 1\\
+{\footnotesize 08-05-2026}
+}
+
+\author{
+\IEEEauthorblockN{Keren Better, Joly-Eline Himpers, Floris Kappen, Marieke Morganwiese}
+\IEEEauthorblockA{
+\textit{Utrecht University} \\
+Group 14 \\
+}
+}
+
+
+
+\maketitle
+
+\begin{abstract}
+This assignment explores the application of deep learning models for time series prediction using real-world laser measurement data. The objective is to design and train a neural network capable of forecasting one-step-ahead values based on historical observations. Different model architectures are considered and motivated, with particular attention to their suitability for sequential data.
+
+A key aspect of the study involves tuning the number of past time steps used as input to optimize predictive performance. The trained model is subsequently employed in a recursive manner to generate multi-step forecasts, specifically predicting the next 200 data points. Model performance is evaluated on a separate test dataset using Mean Absolute Error (MAE) and Mean Squared Error (MSE), alongside visual comparison between predicted and actual values.
+
+The results provide insight into the effectiveness of neural networks for nonlinear time series forecasting and highlight the impact of input window size and recursive prediction on model accuracy.
+\end{abstract}
+
+\begin{IEEEkeywords}
+deep learning, time series, neural networks, laser data, forecasting
+\end{IEEEkeywords}
+
+\section{Introduction}
+Laser-based measurement systems are widely used in modern applications due to their high precision, speed, cost-efficiency, and the fact that they enable contact-free measurements \cite{b1}. However, the raw output from these systems often contains non-linearities and noise that can be too complex for traditional statistical models to capture effectively.
+
+Deep learning models, a subset of machine learning, utilize architectures that mimic the biological brain to address such complexities. An artificial neural network is constructed using multiple layers of synthetic neurons that perform a variety of computational tasks. These layers are interconnected with varying strengths, or weights, which are learned, adjusted, and optimized during training. The use of non-linear activation functions allows these models to capture intricate patterns within the data, making them exceptionally beneficial for complex regression and classification tasks \cite{b2}
+
+In this study, we develop two neural network models specifically designed to process laser measurement data. By leveraging a Recurrent Neural Network (RNN) and a Long Short-Term Memory (LSTM) architecture, we aim to demonstrate that deep learning can successfully predict complex temporal dependencies within the dataset.
+
+The remainder of this paper is structured as follows: \cref{Models} explains and justifies our model selection; \cref{Approach} presents our methodology and technical design; \cref{Results} demonstrates our findings; and \cref{Conclusion} concludes the paper and discusses future work.
+
+
+
+
+\section{Used Models}
+\label{Models}
+This section introduces the selected models and demonstrates the advantage of choosing them.
+
+\subsection{Recurrent Neural Networks}
+\label{RNN}
+A Recurrent Neural Network (RNN) is a type of deep learning model that, like other artificial neural networks, utilizes layers of interconnected neurons to process data. However, in addition to standard input, output, and hidden layers, it incorporates a "recurrent workflow." This structure essentially allows the model to learn patterns based on historical events and utilize them for future predictions \cite{b3}.
+
+This short-term memory is facilitated by a hidden state maintained at each time step. The current time step receives the hidden state from the previous step through a feedback loop, enabling the model to retain previous information and allow it to influence the current output. While traditional neural networks assume independence between events in a sequence, the short-term memory of an RNN allows it to learn dependencies between events. This makes it better equipped for tasks involving sequential data, such as natural language processing or time-series analysis \cite{b4}.
+
+However, a significant limitation of standard RNNs occurs when the gap between the relevant context and the point where it is needed becomes too large for the short-term memory to capture (a problem often referred to as the vanishing gradient problem) \cite{b5}.
+
+\subsection{Long Short-Term Memory}
+\label{LSTM}
+Long Short-Term Memory (LSTM) networks are a specialized variant of RNNs, introduced by Hochreiter and Schmidhuber \cite{b6}, explicitly designed to address the vanishing gradient problem described in \cref{RNN}. The key innovation is a \emph{cell state} that runs through the entire sequence, regulated by three gating mechanisms: the \emph{forget gate}, which decides what information to discard from the cell state; the \emph{input gate}, which controls what new information is stored; and the \emph{output gate}, which determines what part of the cell state is used to produce the hidden state at each time step. Each gate uses a sigmoid activation to produce values between 0 and 1, effectively learning when to remember, update, or expose information \cite{b7}.
+
+This gating architecture allows LSTMs to maintain gradients over much longer sequences than standard RNNs, making them particularly effective for tasks where long-range dependencies matter. In the context of our laser measurement data, the signal exhibits quasi-periodic patterns with varying amplitude and frequency over time. An LSTM can capture both the short-term oscillatory behavior and the longer-term trends in amplitude, which would be difficult for a vanilla RNN with a limited memory horizon.
+
+We therefore select the LSTM as our primary model for this task, while also training a standard RNN as a baseline for comparison.
+
+\section{Approach}
+\label{Approach}
+
+\subsection{Data Preprocessing}
+The dataset consists of 1000 laser measurement samples provided in a MATLAB \texttt{.mat} file. Since neural networks are sensitive to the scale of input features, we apply Min-Max normalization to scale the data to the range $[0, 1]$ before training. All reported predictions are scaled back to the original domain for evaluation.
+
+\subsection{Sliding Window Formulation}
+To frame the time series as a supervised learning problem, we use a sliding window of size $w$: each training sample consists of $w$ consecutive observations $(y_t, y_{t+1}, \ldots, y_{t+w-1})$ as input and the next value $y_{t+w}$ as the target. The choice of $w$ is a tunable hyperparameter that directly affects model performance (see \cref{window_tuning}).
+
+\subsection{Model Architecture}
+Our LSTM model is built as a sequential network with three layers: an LSTM layer with 50 hidden units and \texttt{tanh} activation, followed by a dense layer with 25 neurons and ReLU activation, and a single linear output neuron that produces the one-step-ahead prediction. As a baseline, we also train a SimpleRNN with 20 hidden units and ReLU activation followed by a single output neuron.
+
+Both models are compiled with the Adam optimizer \cite{b8} and trained using Mean Squared Error (MSE) as the loss function. Training runs for 100 epochs with a batch size of 32 and a 80/20 training/validation split.
+
+\subsection{Window Size Tuning}
+\label{window_tuning}
+The number of past time steps $w$ used as input is a critical hyperparameter. A window that is too small may fail to capture the periodicity of the signal, while an excessively large window can introduce noise and increase computational cost. We evaluate window sizes $w \in \{5, 10, 15, 20, 30, 50\}$ by training the LSTM model for each value and comparing the resulting validation loss. The window size with the lowest validation MSE is selected for the final model.
+
+\subsection{Recursive Multi-Step Forecasting}
+Once the model is trained, we generate a 200-step forecast by applying the model recursively: the last $w$ values of the training set form the initial input window; the model predicts one step ahead, after which the window is shifted forward by one position and the predicted value is appended. This process repeats 200 times. A known limitation of this approach is error accumulation, where small prediction errors compound over successive steps.
+
+\section{Results}
+\label{Results}
+Qualitative and quantitative analysis 
+
+
+\section{Conclusion}
+\label{Conclusion}
+Summary of your findings 
+
+
+\section{References}
+\begin{thebibliography}{00}
+\bibitem{b1} Blum-Novotest UK, ``A Quick Guide to Laser Measuring Systems: The Benefits,'' April 3, 2025. [Online]. Available: \url{https://blum-novotestuk.com/a-quick-guide-to-laser-measuring-systems-the-benefits/}
+
+
+\bibitem{b2} IBM, ``What is Deep Learning?'' IBM Think Topics, 2024. [Online]. Available: \url{https://www.ibm.com/think/topics/deep-learning}
+
+
+\bibitem{b3} AWS, ``What is a Recurrent Neural Network?'' Amazon Web Services, 2024. [Online]. Available: \url{https://aws.amazon.com/what-is/recurrent-neural-network/}
+
+
+\bibitem{b4} IBM, ``What are Recurrent Neural Networks?'' IBM Think Topics, 2024. [Online]. Available: \url{https://www.ibm.com/think/topics/recurrent-neural-networks}
+
+
+\bibitem{b5} A. Nama, ``Understanding Bidirectional LSTM for Sequential Data Processing,'' Medium, 2023. [Online]. Available: \url{https://medium.com/@anishnama20/understanding-bidirectional-lstm-for-sequential-data-processing-b83d6283befc}
+
+\bibitem{b6} S. Hochreiter and J. Schmidhuber, ``Long Short-Term Memory,'' \textit{Neural Computation}, vol.~9, no.~8, pp.~1735--1780, 1997.
+
+\bibitem{b7} C. Olah, ``Understanding LSTM Networks,'' 2015. [Online]. Available: \url{https://colah.github.io/posts/2015-08-Understanding-LSTMs/}
+
+\bibitem{b8} D. P. Kingma and J. Ba, ``Adam: A Method for Stochastic Optimization,'' in \textit{Proc. 3rd Int. Conf. Learn. Representations (ICLR)}, San Diego, CA, USA, 2015.
+
+\end{thebibliography}
+
+
+
+
+
+\end{document}
