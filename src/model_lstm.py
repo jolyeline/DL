@@ -7,25 +7,44 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, LSTM, Input
+import random
+import tensorflow as tf  
 
+# constants
+EPOCHS = 100
+PREDICTIONS = 200
+RANDOM_SEED = 42
+VAL_SPLIT = 0.2
+
+# hyperparameters for grid  search
+WINDOW_SIZES = [10, 20, 30, 40, 50]
+LSTM_UNITS = [32, 50, 100]
+BATCH_SIZES = [8, 16, 32]
+
+# setup
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+os.environ["PYTHONHASHSEED"] = str(RANDOM_SEED)
+
+np.random.seed(RANDOM_SEED)
+random.seed(RANDOM_SEED)
+tf.random.set_seed(RANDOM_SEED)
 
 os.makedirs("models", exist_ok=True)
 os.makedirs("output", exist_ok=True)
 
-WINDOW_SIZES = [10, 20, 30]
-LSTM_UNITS = [32, 50]
-BATCH_SIZES = [16, 32]
-
-EPOCHS = 100
-PREDICTIONS = 200
-
 data = scipy.io.loadmat("data/Xtrain.mat")
 X_raw = data["Xtrain"].flatten().reshape(-1, 1)
-
 scaler = MinMaxScaler(feature_range=(0, 1))
 X_scaled = scaler.fit_transform(X_raw).flatten()
+
+best_score = float("inf")
+best_params = None
+best_model = None
+best_history = None
+best_X = None
+best_Y = None
+
 
 def create_sequences(data, window):
     ''' Creates sequences of data with specified window size for LSTM training.'''
@@ -45,13 +64,6 @@ def build_lstm(window_size, units):
     model.compile(optimizer="adam", loss="mse")
     return model
 
-best_score = float("inf")
-best_params = None
-best_model = None
-best_history = None
-best_X = None
-best_Y = None
-
 
 # Grid search over hyperparameters
 for window, units, batch in product(WINDOW_SIZES, LSTM_UNITS, BATCH_SIZES):
@@ -60,11 +72,23 @@ for window, units, batch in product(WINDOW_SIZES, LSTM_UNITS, BATCH_SIZES):
     X, Y = create_sequences(X_scaled, window)
     X = X.reshape(X.shape[0], X.shape[1], 1)
 
-    model = build_lstm(window, units)
-    history = model.fit(X, Y, epochs=EPOCHS, batch_size=batch, verbose=0)
+    split = int(len(X) * (1 - VAL_SPLIT))
 
-    preds = model.predict(X, verbose=0)
-    mse = mean_squared_error(Y, preds)
+    X_train, X_val = X[:split], X[split:]
+    Y_train, Y_val = Y[:split], Y[split:]
+
+    model = build_lstm(window, units)
+
+    history = model.fit(
+        X_train, Y_train,
+        validation_data=(X_val, Y_val),
+        epochs=EPOCHS,
+        batch_size=batch,
+        verbose=0
+    )
+
+    val_preds = model.predict(X_val, verbose=0)
+    mse = mean_squared_error(Y_val, val_preds)
 
     print("MSE:", mse)
 
@@ -73,10 +97,10 @@ for window, units, batch in product(WINDOW_SIZES, LSTM_UNITS, BATCH_SIZES):
         best_params = (window, units, batch)
         best_model = model
         best_history = history
-        best_X = X
-        best_Y = Y
+        best_X = X_train
+        best_Y = Y_train
 
-print("\nBEST PARAMS:", best_params)
+print("\nBEST PARAMS (window, units, batch):", best_params)
 print("BEST MSE:", best_score)
 
 best_model.save("models/best_lstm_model.keras")
@@ -99,7 +123,8 @@ recursive_preds = scaler.inverse_transform(
 
 # loss plot 
 plt.figure(figsize=(10, 5))
-plt.plot(best_history.history["loss"], label="Training Loss")
+plt.plot(best_history.history["loss"], label="Training Loss") #training loss
+plt.plot(best_history.history["val_loss"], label="Validation Loss")#validation loss
 plt.xlabel("Epochs")
 plt.ylabel("Loss")
 plt.legend()
@@ -136,4 +161,5 @@ plt.legend()
 plt.savefig("output/lstm_forecast_results.png")
 plt.show()
 
-print("Final Training Loss:", best_history.history["loss"][-1])
+print("Best Validation Loss:", min(best_history.history["val_loss"]))
+print("Final Validation Loss:", best_history.history["val_loss"][-1])
