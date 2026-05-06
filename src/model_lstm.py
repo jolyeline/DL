@@ -19,8 +19,9 @@ os.makedirs("output", exist_ok=True)
 WINDOW_SIZE = 20 #TODO try multiple using hyperparameter grid search 
 EPOCHS=100
 BATCH_SIZE=32
-VAL_SPLIT=0.2
+VAL_SPLIT=0 #use 100% training set, no validation split, since we will evaluate on the test set. If you want to monitor training performance, set this to 0.2 or similar.
 VERBOSE=1 #print epoch loading, otherwise change to 0
+PREDICTIONS=200 #make 200 predictions 
 
 # Load and preprocess data
 data = scipy.io.loadmat("data/Xtrain.mat")
@@ -83,7 +84,8 @@ recursive_preds = scaler.inverse_transform(np.array(recursive_preds_scaled).resh
 # visualise loss curve 
 plt.figure(figsize=(10, 5))
 plt.plot(history.history['loss'], label='Training Loss (MSE)')
-plt.plot(history.history['val_loss'], label='Validation Loss (MSE)')
+if VAL_SPLIT > 0:
+    plt.plot(history.history['val_loss'], label='Validation Loss (MSE)')
 plt.title('Model Convergence: Training vs. Validation Loss')
 plt.xlabel('Epochs')
 plt.ylabel('Mean Squared Error')
@@ -95,8 +97,8 @@ plt.show()
 # FORECAST 
 plt.figure(figsize=(12, 6))
 plt.plot(range(len(X_raw)), X_raw, label="Historical Training Data", alpha=0.7)
-# 200 predictions start right after the last training point
-plt.plot(range(len(X_raw), len(X_raw) + 200), recursive_preds, 
+# 200 predictions
+plt.plot(range(len(X_raw), len(X_raw) + PREDICTIONS), recursive_preds, 
          label="Recursive Forecast (Next 200 steps)", color='red', linewidth=2)
 plt.title("Laser Measurement: Full Sequence + Recursive Forecast")
 plt.xlabel("Time Steps")
