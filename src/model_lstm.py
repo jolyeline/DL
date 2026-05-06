@@ -92,7 +92,25 @@ plt.grid(True, linestyle='--', alpha=0.6)
 plt.savefig("output/loss_lstm.png")
 plt.show()
 
-# FORECAST 
+# PREDICTIONS VS ACTUAL (train + validation)
+split = int(len(X) * (1 - VAL_SPLIT))
+train_preds = scaler.inverse_transform(model.predict(X[:split], verbose=VERBOSE))
+val_preds = scaler.inverse_transform(model.predict(X[split:], verbose=VERBOSE))
+actual = scaler.inverse_transform(Y.reshape(-1, 1))
+
+plt.figure(figsize=(12, 5))
+plt.plot(actual, label="Actual", alpha=0.7)
+plt.plot(range(split), train_preds, label="Train pred", alpha=0.7)
+plt.plot(range(split, split + len(val_preds)), val_preds, label="Validation pred", alpha=0.8)
+plt.axvline(split, color="grey", linestyle="--", linewidth=1)
+plt.title("LSTM Predictions vs Actual")
+plt.xlabel("Index")
+plt.ylabel("Measurement Value")
+plt.legend()
+plt.savefig("output/pred_vs_actual_lstm.png")
+plt.show()
+
+# FORECAST
 plt.figure(figsize=(12, 6))
 plt.plot(range(len(X_raw)), X_raw, label="Historical Training Data", alpha=0.7)
 # 200 predictions start right after the last training point
