@@ -163,3 +163,55 @@ plt.show()
 
 print("Best Validation Loss:", min(best_history.history["val_loss"]))
 print("Final Validation Loss:", best_history.history["val_loss"][-1])
+
+
+# ---------------------------------------------------------------------------
+# Test-set evaluation: one-step vs recursive 200-step forecasting
+# ---------------------------------------------------------------------------
+try:
+    X_test = scipy.io.loadmat("data/Xtest.mat")["Xtest"].flatten()
+except FileNotFoundError:
+    print("\ndata/Xtest.mat not found — skipping test evaluation.")
+else:
+    X_test_scaled = scaler.transform(X_test.reshape(-1, 1)).flatten()
+    ws = best_params[0]
+
+    # one-step-ahead: each prediction uses real preceding test values
+    Xs, Ys = [], []
+    for i in range(len(X_test_scaled) - ws):
+        Xs.append(X_test_scaled[i:i + ws])
+        Ys.append(X_test_scaled[i + ws])
+    Xs = np.array(Xs).reshape(-1, ws, 1)
+    one_step_preds = scaler.inverse_transform(
+        best_model.predict(Xs, verbose=0)
+    ).flatten()
+    one_step_true = scaler.inverse_transform(np.array(Ys).reshape(-1, 1)).flatten()
+    os_mse = mean_squared_error(one_step_true, one_step_preds)
+    os_mae = np.mean(np.abs(one_step_true - one_step_preds))
+
+    # recursive 200-step (already computed above as recursive_preds)
+    rec_preds = recursive_preds.flatten()
+    rec_mse = mean_squared_error(X_test, rec_preds)
+    rec_mae = np.mean(np.abs(X_test - rec_preds))
+
+    # naive baseline: predict the training mean for every step
+    baseline = np.full(len(X_test), X_raw.mean())
+    base_mse = mean_squared_error(X_test, baseline)
+    base_mae = np.mean(np.abs(X_test - baseline))
+
+    print("\n=== LSTM test-set evaluation ===")
+    print(f"  one-step           MSE={os_mse:.4f}  MAE={os_mae:.4f}")
+    print(f"  recursive 200-step MSE={rec_mse:.4f}  MAE={rec_mae:.4f}")
+    print(f"  naive (train mean) MSE={base_mse:.4f}  MAE={base_mae:.4f}")
+
+    plt.figure(figsize=(12, 5))
+    plt.plot(X_test, label="Ground truth", color="black", linewidth=1.5)
+    plt.plot(one_step_preds, label="One-step (uses real history)", alpha=0.8)
+    plt.plot(rec_preds, label="Recursive 200-step", alpha=0.8)
+    plt.axhline(X_raw.mean(), color="gray", linestyle="--", alpha=0.6, label="Train mean baseline")
+    plt.xlabel("Test index")
+    plt.ylabel("Value")
+    plt.title("LSTM: one-step vs recursive forecast on test set")
+    plt.legend()
+    plt.savefig("output/lstm_test_eval.png")
+    plt.show()
