@@ -16,7 +16,7 @@
 \begin{document}
 
 \title{Deep Learning: Assignment 1\\
-{\footnotesize 08-05-2026}
+{\footnotesize 11-05-2026}
 }
 
 \author{
@@ -32,11 +32,13 @@ Group 14 \\
 \maketitle
 
 \begin{abstract}
-This assignment explores the application of deep learning models for time series prediction using real-world laser measurement data. The objective is to design and train a neural network capable of forecasting one-step-ahead values based on historical observations. Different model architectures are considered and motivated, with particular attention to their suitability for sequential data.
 
-A key aspect of the study involves tuning the number of past time steps used as input to optimize predictive performance. We compare a SimpleRNN baseline against an LSTM, tuning each via grid search over window size, hidden units, and batch size (and learning rate for the RNN), and selecting the configuration with the lowest validation MSE. Each final model is evaluated against a held-out test set of 200 ground-truth values under two regimes: one-step-ahead prediction and recursive 200-step forecasting.
+This research explores the application of deep learning models for time series prediction using real-world laser measurement data. A Recurrent Neural Network (RNN) and a Long Short-Term Memory (LSTM) network are trained to predict one step ahead on a 1000-sample training sequence, and then used to forecast the next 200 values recursively by feeding their own predictions back as input. Different model architectures are considered and motivated, with particular attention to their suitability for sequential data.
 
-The results provide insight into the effectiveness of neural networks for nonlinear time series forecasting and highlight the impact of input window size and recursive prediction on model accuracy.
+Both models are tuned via grid search over window size, hidden units, and batch size (and learning rate for the RNN), selecting the configuration with the lowest validation MSE. The final models are evaluated against the held-out 200-value test set using Mean Squared Error and Mean Absolute Error, with one-step-ahead prediction reported as a diagnostic of learned short-term skill.
+
+Results show that, while the LSTM achieves substantially better one-step-ahead skill than the SimpleRNN, neither model produces a useful recursive 200-step forecast: errors accumulate rapidly and both models ultimately perform worse than a trivial naive baseline. These findings emphasize the limits of teacher-forced training when the same model is required to roll out its own predictions over long horizons.
+
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -44,108 +46,109 @@ deep learning, time series, neural networks, laser data, forecasting
 \end{IEEEkeywords}
 
 \section{Introduction}
-Laser-based measurement systems are widely used in modern applications due to their high precision, speed, cost-efficiency, and the fact that they enable contact-free measurements \cite{b1}. However, the raw output from these systems often contains non-linearities and noise that can be too complex for traditional statistical models to capture effectively. The dataset consists of 1000 sequential laser measurements, and the task is to forecast the next 200 values.
+Laser-based measurement systems are widely used in modern applications due to their high precision, speed, cost-efficiency, and the fact that they enable contact-free measurements \cite{b1}. However, the raw output from these systems often contains non-linearities and noise that can be too complex for traditional statistical models to capture effectively. 
 
 Deep learning models, a subset of machine learning, utilize architectures that mimic the biological brain to address such complexities. An artificial neural network is constructed using multiple layers of synthetic neurons that perform a variety of computational tasks. These layers are interconnected with varying strengths, or weights, which are learned, adjusted, and optimized during training. The use of non-linear activation functions allows these models to capture intricate patterns within the data, making them exceptionally beneficial for complex regression and classification tasks \cite{b2}
 
-In this study, we develop two neural network models specifically designed to process laser measurement data. By leveraging a Recurrent Neural Network (RNN) and a Long Short-Term Memory (LSTM) architecture, we aim to demonstrate that deep learning can successfully predict complex temporal dependencies within the dataset.
+In this study, two neural network models are specifically designed to process laser measurement data. By leveraging a Recurrent Neural Network (RNN) and a Long Short-Term Memory (LSTM) architecture, the aim is to demonstrate that deep learning can successfully predict complex temporal dependencies within the dataset. The dataset consists of 1000 sequential laser measurements, to evaluate the models' ability to forecast the next 200 values.
 
-The remainder of this paper is structured as follows: \cref{Models} explains and justifies our model selection; \cref{Approach} presents our methodology and technical design; \cref{Results} demonstrates our findings; and \cref{Conclusion} concludes the paper and discusses future work.
+The remainder of this paper is structured as follows: \cref{Models} explains and justifies the model selection; \cref{Approach} presents methodology and technical design; \cref{Results} demonstrates findings; and \cref{Conclusion} concludes the paper and discusses future work.
 
 
 
 
 \section{Used Models}
 \label{Models}
-This section introduces the selected models and demonstrates the advantage of choosing them.
 
 \subsection{Recurrent Neural Networks}
 \label{RNN}
-A Recurrent Neural Network (RNN) is a type of deep learning model that, like other artificial neural networks, utilizes layers of interconnected neurons to process data. However, in addition to standard input, output, and hidden layers, it incorporates a "recurrent workflow." This structure essentially allows the model to learn patterns based on historical events and utilize them for future predictions \cite{b3}.
-
-This short-term memory is facilitated by a hidden state maintained at each time step. The current time step receives the hidden state from the previous step through a feedback loop, enabling the model to retain previous information and allow it to influence the current output. While traditional neural networks assume independence between events in a sequence, the short-term memory of an RNN allows it to learn dependencies between events. This makes it better equipped for tasks involving sequential data, such as natural language processing or time-series analysis \cite{b4}.
-
-However, a significant limitation of standard RNNs occurs when the gap between the relevant context and the point where it is needed becomes too large for the short-term memory to capture (a problem often referred to as the vanishing gradient problem) \cite{b5}.
+A Recurrent Neural Network (RNN) processes sequential data by maintaining a hidden state that is updated at each time step and fed back as input to the next, allowing the network to model dependencies between successive observations \cite{b3,b4}. This makes RNNs a natural fit for time-series problems such as ours. However, vanilla RNNs suffer from the vanishing gradient problem: signal from observations far in the past can become too small to influence the current prediction, limiting their effective memory horizon \cite{b5}. Therefore, the SimpleRNN is used as a baseline.
 
 \subsection{Long Short-Term Memory}
 \label{LSTM}
-Long Short-Term Memory (LSTM) networks are a specialized variant of RNNs, introduced by Hochreiter and Schmidhuber \cite{b6}, explicitly designed to address the vanishing gradient problem described in \cref{RNN}. The key innovation is a \emph{cell state} that runs through the entire sequence, regulated by three gating mechanisms: the \emph{forget gate}, which decides what information to discard from the cell state; the \emph{input gate}, which controls what new information is stored; and the \emph{output gate}, which determines what part of the cell state is used to produce the hidden state at each time step. Each gate uses a sigmoid activation to produce values between 0 and 1, effectively learning when to remember, update, or expose information \cite{b7}.
-
-This gating architecture allows LSTMs to maintain gradients over much longer sequences than standard RNNs, making them particularly effective for tasks where long-range dependencies matter. In the context of our laser measurement data, the signal exhibits quasi-periodic patterns with varying amplitude and frequency over time. An LSTM can capture both the short-term oscillatory behavior and the longer-term trends in amplitude, which would be difficult for a vanilla RNN with a limited memory horizon.
-
-We therefore select the LSTM as our primary model for this task, while also training a standard RNN as a baseline for comparison.
+Long Short-Term Memory (LSTM) networks \cite{b6} address this limitation through a gated \emph{cell state} controlled by forget, input, and output gates, enabling stable gradient flow over much longer sequences \cite{b7}. For the laser signal, which exhibits quasi-periodic structure with varying amplitude, this gating mechanism is well suited to capturing both short- and longer-term dynamics. Therefore, LSTM is selected as the primary model and compared against the SimpleRNN baseline.
 
 \section{Approach}
 \label{Approach}
 
 \subsection{Data Preprocessing}
-The dataset consists of 1000 laser measurement samples provided in a MATLAB \texttt{.mat} file. Since neural networks are sensitive to the scale of input features, we apply Min-Max normalization to scale the data to the range $[0, 1]$ before training. All reported predictions are scaled back to the original domain for evaluation.
+The dataset consists of 1000 laser measurement samples provided in a MATLAB \texttt{.mat} file. Since neural networks are sensitive to the scale of input features, Min-Max normalization is applied to scale the data within the range $[0, 1]$ before training. All reported predictions are scaled back to the original domain for evaluation.
+Furthermore, the effects of augmenting the data by using interpolation were explored, but since models trained on raw data outperformed those trained on interpolated data, the use of interpolated data was discarded. 
+
 
 \subsection{Train/Validation Split}
-Before training, the 1000-sample sequence is split chronologically into 80\% training and 20\% validation, with the validation portion taken as the last 200 points. A chronological rather than random split is essential for time-series data: shuffling would leak future observations into training and produce overly optimistic estimates of forecasting skill. The validation set provides an unbiased estimate of one-step-ahead generalization error and is used as the model-selection criterion during hyperparameter tuning. The official held-out test set, released separately, is reserved exclusively for final evaluation of the recursive multi-step forecast.
+Before training, the 1000-sample sequence is split chronologically into 80\% training and 20\% validation, with the validation portion taken as the last 200 points. A chronological rather than random split is essential for time-series data as shuffling would leak future observations into training and produce overly optimistic estimates of forecasting skill. The validation set provides an unbiased estimate of one-step-ahead generalization error and is used as the model-selection criterion during hyperparameter tuning. The official held-out test set, released separately, is reserved exclusively for final evaluation of the recursive multi-step forecast.
 
 \subsection{Sliding Window Formulation}
-To frame the time series as a supervised learning problem, we use a sliding window of size $w$: each training sample consists of $w$ consecutive observations $(y_t, y_{t+1}, \ldots, y_{t+w-1})$ as input and the next value $y_{t+w}$ as the target. The choice of $w$ is a tunable hyperparameter that directly affects model performance (see \cref{window_tuning}).
+To frame the time series as a supervised learning problem, a sliding window of size $w$ is used: each training sample consists of $w$ consecutive observations $(y_t, y_{t+1}, \ldots, y_{t+w-1})$ as input and the next value $y_{t+w}$ as the target. The choice of $w$ is a tunable hyperparameter that directly affects model performance (see \cref{window_tuning}).
 
 \subsection{Model Architecture}
-Our LSTM is a sequential network with an LSTM layer (\texttt{tanh} activation), followed by a Dense layer with 25 ReLU units, and a single linear output. As a baseline we use a SimpleRNN with one recurrent layer (\texttt{tanh}) and a linear output. Both models are trained with the Adam optimizer~\cite{b8} and Mean Squared Error loss for up to 100 epochs. The RNN additionally uses early stopping with \texttt{restore\_best\_weights} on validation loss to mitigate overfitting.
+The LSTM is a sequential network with an LSTM layer (\texttt{tanh} activation), followed by a Dense layer with 25 ReLU units, and a single linear output. As a baseline the SimpleRNN with one recurrent layer (\texttt{tanh}) and a linear output is used. Both models are trained with the Adam optimizer~\cite{b8} and Mean Squared Error loss for up to 100 epochs. The RNN additionally uses early stopping with \texttt{restore\_best\_weights} on validation loss to mitigate overfitting.
 
-Hidden-unit count, window size, and batch size all materially affect performance, so rather than fixing them we perform a grid search over $\text{window} \in \{10, 20, 30, 40, 50\}$, $\text{units} \in \{32, 50, 100\}$, and $\text{batch size} \in \{8, 16, 32\}$ for the LSTM, and over $\text{window} \in \{1, 2, 5, 10\}$, $\text{units} \in \{20, 50, 100\}$, $\text{lr} \in \{0.001, 0.01\}$, and $\text{batch} \in \{32, 64\}$ for the RNN baseline. MSE is the natural loss for regression on a continuous signal and is consistent with the evaluation metric. Each configuration is trained and ranked by validation MSE; the configuration with the lowest validation MSE is retained as the final model. For the LSTM, the selected configuration was window size 20 with 100 hidden units; for the RNN, window size 2 was chosen as discussed below.
+Hidden-unit count, window size, and batch size all materially affect performance. A grid search is performed over $\text{window size } \in \{10, 20, 30, 40, 50\}$, $\text{number of units} \in \{32, 50, 100\}$, and $\text{batch size} \in \{8, 16, 32\}$ for the LSTM, and over $\text{window size} \in \{1, 2, 5, 10\}$, $\text{number of units} \in \{20, 50, 100\}$, $\text{learning rate} \in \{0.001, 0.01\}$, and $\text{batch size} \in \{32, 64\}$ for the RNN baseline. MSE is the natural loss for regression on a continuous signal and is consistent with the evaluation metric. Each configuration is trained and ranked by validation MSE; the configuration with the lowest validation MSE is retained as the final model. For the LSTM, the selected configuration was window size 20 with 100 hidden units; for the RNN, window size 2 was chosen as discussed below.
 
+\label{window_tuning}
 Analysis of the RNN's performance across varying window sizes (WS) revealed a trade-off between stability and performance. As illustrated in Figure \ref{fig:effect_of_window_size_RNN}, a window size of 10 achieved the most consistent results, yielding the lowest mean error ($\approx 0.003$) and the lowest variance across trials. In contrast, while WS=2 exhibited significantly higher variance, it was capable of reaching a better peak performance in its best iteration, achieving an MSE of approximately $0.001$ (lower than any individual trial for WS=10).
 
-\begin{figure}[h]
+\begin{figure}[ht]
     \centering
-    \includegraphics[width=0.55\textwidth]{figures/rnn/effect_of_window_size_RNN.png}
-    \caption{effect of window size RNN}
+    \includegraphics[width=0.35\textwidth]{figures/rnn/effect_of_window_size_RNN.png}
+    \caption{Effect of window size on validation MSE for the RNN grid search. Bars show the mean validation loss across all grid configurations sharing a given window size; error bars span the min/max range.}
     \label{fig:effect_of_window_size_RNN}
 \end{figure}
 
-To determine the most reliable configuration for the final model, we conducted a direct comparison of the training dynamics for both WS=2 and WS=10. As shown in Figure \ref{fig:Loss RNN models}, the WS=2 configuration demonstrated superior convergence behavior; the training loss tracked the validation loss more closely and stabilized at a lower overall MSE. This closer alignment suggests better generalization and a more robust learning process. Consequently, a window size of 2 was selected for the final model.
+To determine the most reliable configuration for the final model, a direct comparison of the training dynamics for both WS=2 and WS=10 is conducted. As shown in Figure \ref{fig:Loss RNN models}, the WS=2 configuration demonstrated superior convergence behavior; the training loss tracked the validation loss more closely and stabilized at a lower overall MSE. This closer alignment suggests better generalization and a more robust learning process. Consequently, a window size of 2 was selected for the final model.
 
 
-\begin{figure}[h]
+\begin{figure}[ht]
     \centering
-    \includegraphics[width=0.55\textwidth]{figures/rnn/Loss_RNN_models.png}
-    \caption{Loss RNN models}
+    \includegraphics[width=0.50\textwidth]{figures/rnn/Loss_RNN_models.png}
+    \caption{Training and validation MSE per epoch for the final RNN models with window sizes 2 and 10. WS=2 converges to a lower validation loss and is selected as the final configuration.}
     \label{fig:Loss RNN models}
 \end{figure}
 
 
 \subsection{Recursive Multi-Step Forecasting}
-Once the model is trained, we generate a 200-step forecast by applying the model recursively: the last $w$ values of the training set form the initial input window; the model predicts one step ahead, after which the window is shifted forward by one position and the predicted value is appended. This process repeats 200 times. A known limitation of this approach is error accumulation, where small prediction errors compound over successive steps.
+Once the model is trained, a 200-step forecast is generated by applying the model recursively: the last $w$ values of the training set form the initial input window; the model predicts one step ahead, after which the window is shifted forward by one position and the predicted value is appended. This process repeats 200 times. A known limitation of this approach is error accumulation, where small prediction errors compound over successive steps.
 
 \section{Results}
 \label{Results}
-The following section presents our models' results and main findings.
+% The following section presents the models' results and main findings.
 
-Both models demonstrated stable convergence, as evidenced by the Mean Squared Error (MSE) loss curves shown in Figures \ref{fig:rnn_results} and \ref{fig:loss_lstm}. The LSTM model reached a near-zero validation MSE within 100 epochs, and the validation loss closely tracked the training loss, indicating minimal overfitting. The RNN model required more epochs (approximately 180--200) to stabilize. Notably, the training loss remained slightly higher than the validation loss in the final RNN (WS=2), which we attribute to the smoother dynamics of the chronological validation segment rather than to systematic underfitting.
 
-We evaluate both final models on the held-out test set under two regimes: \emph{one-step-ahead}, where each prediction is conditioned on the $w$ preceding ground-truth test values, and \emph{recursive 200-step}, where the model is rolled out autoregressively from the end of the training sequence, feeding its own predictions back as input. As a sanity-check baseline we also report the error obtained by predicting the training mean for every test step. Results are summarized in Table~\ref{tab:test_metrics}.
+Both models demonstrated stable convergence, as evidenced by the Mean Squared Error (MSE) loss curves shown in Figures \ref{fig:Loss RNN models} and \ref{fig:loss_lstm}. The LSTM model reached a near-zero validation MSE within 100 epochs, and the validation loss closely tracked the training loss, indicating minimal overfitting. The RNN model required more epochs (approximately 180--200) to stabilize. Notably, the training loss remained slightly higher than the validation loss in the final RNN (WS=2). This is plausibly attributed to the smoother dynamics of the chronological validation segment rather than to systematic underfitting.
 
-\begin{table}[h]
+The assigned task is to produce a 200-step recursive forecast from the end of the training sequence and compare it to the held-out test set. Therefore, \emph{recursive 200-step} performance is reported as the primary evaluation: the model is rolled out autoregressively from the last $w$ training values, feeding its own predictions back as input for 200 iterations. As a sanity-check baseline the error obtained by predicting the training mean for every test step is reported. For completeness, the diagnostic \emph{one-step-ahead} number that measures how well each model predicts the next value when conditioned on $w$ \emph{real} preceding test values is included; this is not the assigned task but indicates whether the model has learned useful short-term dynamics at all. Results are summarized in Table~\ref{tab:test_metrics}.
+
+\begin{table}[ht]
     \centering
     \caption{Test-set performance (original units). One-step prediction uses real preceding test values; recursive 200-step forecasts from the end of the training sequence.}
     \label{tab:test_metrics}
     \begin{tabular}{lcccc}
         \hline
-         & \multicolumn{2}{c}{One-step} & \multicolumn{2}{c}{Recursive 200-step} \\
+         & \multicolumn{2}{c}{Recursive 200-step} & \multicolumn{2}{c}{One-step (diagnostic)} \\
         Model & MSE & MAE & MSE & MAE \\
         \hline
-        LSTM             & 8.60   & 1.85  & 5036.62 & 52.88 \\
-        SimpleRNN (WS=2) & 93.22  & 5.97  & 1906.81 & 28.92 \\
-        Naive (train mean) & --- & --- & 1672.22 & 27.73 \\
+        LSTM               & 5036.62 & 52.88 & 8.60  & 1.85 \\
+        SimpleRNN (WS=2)   & 1906.81 & 28.92 & 93.22 & 5.97 \\
+        Naive (train mean) & 1672.22 & 27.73 & ---   & ---  \\
         \hline
     \end{tabular}
 \end{table}
+On the assigned task, both models perform poorly: neither beats the trivial naive baseline of predicting the training mean for every step (MSE 1672.22). The LSTM's recursive MSE of 5036.62 is in fact substantially \emph{worse} than the SimpleRNN's 1906.81, even though the LSTM is the stronger model in the one-step regime. Both failures share the same root cause: the recursive inference strategy, in which each prediction is fed back as input, allows small errors to propagate and amplify over time. However, the two architectures respond to this accumulated error differently. Figure~\ref{fig:recursive_comparison} highlights the architectural difference between the two models. The SimpleRNN suffers from a rapid signal decay, the oscillations become much smaller and eventually flatten into a shallow, stable wave. This is most likely due to the RNN's \emph{vanishing gradient} during training, which prevents the model from learning long-range dependencies, leaving it with no corrective signal to draw on as recursive errors accumulate,causing it to regress toward the training mean. In contrast, the LSTM's gating mechanism allows it to preserve the periodic nature of the data over the full 200-step window. However, its persistent cell state also acts as a vehicle for accumulated recursive error: corrupted inputs are actively carried forward through the forget and input gates, causing progressive overestimation of peak amplitude rather than the dampening seen in the SimpleRNN. This suggests that while the LSTM captures the temporal pattern of the laser data more robustly than the SimpleRNN, its stronger memory makes it more susceptible to error amplification in the long-horizon recursive setting.
 
-In the one-step-ahead regime, the LSTM clearly outperforms the SimpleRNN, achieving a MSE roughly an order of magnitude lower (8.60 vs.\ 93.22). This confirms the expectation that the LSTM's gating mechanism allows it to capture short-term oscillatory structure in the laser signal more accurately than a vanilla recurrent layer.
 
-In the recursive 200-step regime the picture inverts: both models perform poorly, and the LSTM's recursive MSE is in fact \emph{higher} than that of the RNN (5036.62 vs.\ 1906.81). Critically, neither model beats the trivial naive baseline of predicting the training mean for every step (MSE 1672.22). Figure~\ref{fig:recursive_comparison} visualizes this collapse: both models track the signal for roughly the first 30--50 steps before drifting and settling into low-amplitude oscillations around the training mean. We attribute this to the well-known phenomenon of error compounding in autoregressive rollouts: small one-step errors accumulate and quickly push the network into out-of-distribution states for which it was never trained.
+% On the assigned task, both models perform poorly: neither beats the trivial naive baseline of predicting the training mean for every step (MSE 1672.22). The LSTM's recursive MSE of 5036.62 is in fact substantially \emph{worse} than the SimpleRNN's 1906.81, even though the LSTM is the stronger model in the one-step regime. Figure~\ref{fig:recursive_comparison} highlight the architectural difference between the two models. The SimpleRNN suffers from a rapid signal decay, the oscillations become much smaller and eventually flatten into a shallow, stable wave. This is most likely due to the RNN's \emph{vanishing gradient}, leading to the model's inability to maintain long-term memory, which makes it "forget" the intensity of the peaks over time. In contrast, the LSTM succesfully retains the periodic nature of the data over the full 200-step window. However, it overestimates the peak value in the latter half of the sequence, suggesting that while it captures the pattern of the laser data better than the RNN, it struggles with the specific amplitude shift present in the ground truth. 
 
-\begin{figure}[h]
+
+
+% visualizes this collapse: both models track the signal for roughly the first 30--50 steps before drifting and settling into low-amplitude oscillations around the training mean. This can be attributed to the well-known phenomenon of error compounding in autoregressive rollouts: small one-step errors accumulate and quickly push the network into out-of-distribution states for which it was never trained. The LSTM is more severely affected, which is attributed to its larger window size (20 vs.\ 2) amplifying the contamination of its input buffer by its own erroneous predictions.
+
+The one-step-ahead diagnostic in Table~\ref{tab:test_metrics} confirms that each model has nonetheless learned meaningful short-term dynamics. Here the LSTM clearly outperforms the SimpleRNN, achieving an MSE roughly an order of magnitude lower (8.60 vs.\ 93.22), consistent with the expectation that the LSTM's gating mechanism captures the laser signal's short-term oscillatory structure more accurately than a vanilla recurrent layer. The disconnect between strong one-step skill and poor recursive forecasting is precisely the phenomenon that motivates the discussion in Section~\ref{Conclusion}.
+
+\begin{figure}[ht]
     \centering
-    \includegraphics[width=0.95\columnwidth]{figures/recursive_forecast_comparison.png}
+    \includegraphics[width=0.95\columnwidth]{figures/shared/recursive_forecast_comparison.png}
     \caption{Recursive 200-step forecasts on the held-out test set. Both architectures track the signal initially but diverge within $\sim$50 steps and collapse toward a low-amplitude oscillation around the training mean.}
     \label{fig:recursive_comparison}
 \end{figure}
@@ -153,61 +156,73 @@ In the recursive 200-step regime the picture inverts: both models perform poorly
 
 
 
-\begin{figure}[h]
+% \begin{figure}[ht]
+%     \centering
+%     \includegraphics[width=0.55\textwidth]{figures/rnn/rnn_results.png}
+%     \caption{Final RNN (WS=2): training loss over epochs.}
+%     \label{fig:rnn_results}
+% \end{figure}
+
+
+
+
+
+
+
+% \begin{figure}[ht]
+%     \centering
+%     \includegraphics[width=0.55\textwidth]{figures/rnn/Interpolated_vs_raw_RNN_full_data.png}
+%     \caption{Comparison of RNN grid-search validation MSE on the raw 1000-sample dataset versus an interpolated 1999-sample dataset, broken down by window size.}
+%     \label{fig:Interpolated_vs_raw_RNN_full_data}
+% \end{figure}
+
+
+
+
+
+
+
+
+% \begin{figure}[ht]
+%     \centering
+%     \includegraphics[width=0.55\textwidth]{figures/lstm/forecast_results_lstm.png}
+%     \caption{LSTM recursive 200-step forecast appended to the 1000-sample training history.}
+%     \label{fig:forecast_results_lstm}
+% \end{figure}
+
+\begin{figure}[ht]
     \centering
-    \includegraphics[width=0.55\textwidth]{figures/rnn/rnn_results.png}
-    \caption{rnn results}
-    \label{fig:rnn_results}
-\end{figure}
-
-
-
-
-
-
-
-\begin{figure}[h]
-    \centering
-    \includegraphics[width=0.55\textwidth]{figures/rnn/Interpolated_vs_raw_RNN_full_data.png}
-    \caption{Interpolated vs raw RNN full data}
-    \label{fig:Interpolated_vs_raw_RNN_full_data}
-\end{figure}
-
-
-
-
-
-
-
-
-\begin{figure}[h]
-    \centering
-    \includegraphics[width=0.55\textwidth]{figures/lstm/forecast_results_lstm.png}
-    \caption{LSTM Forecast Results}
-    \label{fig:forecast_results_lstm}
-\end{figure}
-
-\begin{figure}[h]
-    \centering
-    \includegraphics[width=0.55\textwidth]{figures/lstm/loss_lstm.png}
-    \caption{LSTM Loss}
+    \includegraphics[width=0.\textwidth]{figures/lstm/loss_lstm.png}
+    \caption{Training and validation MSE per epoch for the final LSTM model (window=20, 100 units).}
     \label{fig:loss_lstm}
 \end{figure}
 
-\begin{figure}[h]
-    \centering
-    \includegraphics[width=0.55\textwidth]{figures/lstm/pred_vs_actual_lstm.png}
-    \caption{Predicted vs Actual LSTM}
-    \label{fig:pred_vs_actual_lstm}
-\end{figure}
+% \begin{figure}[ht]
+%     \centering
+%     \includegraphics[width=0.55\textwidth]{figures/lstm/pred_vs_actual_lstm.png}
+%     \caption{LSTM one-step-ahead predictions versus ground truth on the training set.}
+%     \label{fig:pred_vs_actual_lstm}
+% \end{figure}
 
 
-
-
+% \begin{figure}[ht]
+%     \centering
+%     \includegraphics[width=0.45\textwidth]{figures/rnn/Test_Eval_RNN.png}
+%     \caption{RNN evaluation results}
+%     \label{fig:test_eval_rnn}
+% \end{figure}
 
 \section{Conclusion}
 \label{Conclusion}
-We compared a SimpleRNN baseline and an LSTM for one-step-ahead and recursive multi-step forecasting of laser measurement data. In the one-step-ahead regime the LSTM is the clear winner, with an order-of-magnitude lower MSE on the held-out test set (8.60 vs.\ 93.22). In the recursive 200-step regime, however, neither model beats the trivial baseline of predicting the training mean: errors compound rapidly and the autoregressive forecast diverges from the true trajectory. This is a strong empirical illustration of the limits of teacher-forced training when the model is required to roll out its own predictions for hundreds of steps. Future work could mitigate this by training with scheduled sampling, applying teacher-forcing schedules that gradually expose the model to its own predictions, or adopting a sequence-to-sequence architecture that emits multiple steps in a single forward pass.
+This research evaluated a SimpleRNN baseline and an LSTM on the task of producing a recursive 200-step forecast of laser measurement data. Neither model beat the trivial baseline of predicting the training mean: errors compound rapidly and the autoregressive forecast diverges from the true trajectory within roughly 50 steps. Counter-intuitively, the LSTM performed \emph{worse} than the SimpleRNN under recursive rollout (MSE 5036.62 vs.\ 1906.81), despite achieving an order-of-magnitude lower one-step-ahead error on the same test set (8.60 vs.\ 93.22). 
+By extending the LSTM's window size, the model could potentially learn the slower amplitude modulations present in the laser signal, allowing its gating mechanism to better recognize the current phase of the system. However, this alone is unlikely to resolve the long-horizon forecasting failure, as the fundamental issue, recursive error accumulation at inference time,  is independent of window size. A more principled solution would be to replace the recursive strategy itself, for instance through direct multi-step forecasting or teacher forcing during training.
+
+% By extending the LSTM's window size (e.g., WS = 400), the model could potentially capture the complete pattern of the laser measurements, specifically the repeated transitions from high amplitude osciliations to smaller waves and back to larger peaks again. Providing the model with a broader context window may allow the LSTM's gating mechanism to recognize which phase the laser system is currently in, leading to more accurate long-term forecasts. However, we acknowledge that such a large window size will increase the computational cost and memory requierments during the training phase. 
+
+Future work could investigate training with scheduled sampling, applying teacher-forcing schedules that gradually expose the model to its own predictions, or adopting a sequence-to-sequence architecture that emits multiple steps in a single forward pass.
+
+
+% This disconnect between strong short-term skill and poor long-horizon forecasting is a strong empirical illustration of the limits of teacher-forced training when the model is required to roll out its own predictions for hundreds of steps: the larger and more expressive the model, the more rapidly its outputs can drift into states it was never trained on. Future work could mitigate this by training with scheduled sampling, applying teacher-forcing schedules that gradually expose the model to its own predictions, or adopting a sequence-to-sequence architecture that emits multiple steps in a single forward pass.
 
 
 \section{References}
