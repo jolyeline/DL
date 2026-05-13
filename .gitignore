@@ -217,3 +217,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# everthing in __MACOSX folders
+__MACOSX/
+Final Project data/
