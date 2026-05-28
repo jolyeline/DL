@@ -26,8 +26,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
+import matplotlib.pyplot as plt
 
-print("ST-GCN notebook loaded successfully. Starting data exploration...")
+print("starting ST-GCN...")
 
 # --- Configuration ---
 DATA_ROOT = Path(__file__).resolve().parents[1] / "data"
@@ -48,7 +49,7 @@ TASK_LABELS = {
 }
 LABEL_NAMES = {v: k for k, v in TASK_LABELS.items()}
 SAMPLE_RATE = 2034  # Hz
-
+EPOCHS = 5
 
 # --- Helper Functions ---
 def get_dataset_name(filepath):
@@ -69,7 +70,7 @@ def parse_label(filename):
         return "task_working_memory"
     return "unknown"
 
-
+# --- 1. Dataset exploration ---
 def scan_folder(folder_path, folder_name):
     """Scans an H5 folder and extracts file-level metadata."""
     records = []
@@ -152,16 +153,8 @@ print(class_split_matrix)
 # --- 3. Dataset Implementation ---
 class MEGPipelineDataset(Dataset):
     def __init__(self, folder_path, window_duration=1.0, downsample_factor=4):
-        """
-        Args:
-            folder_path: Path object (e.g. INTRA_TRAIN)
-            window_duration: Size of time chunks in seconds
-            downsample_factor: Integer downsampling rate (reduces 2034Hz)
-        """
         self.folder_path = folder_path
         self.downsample_factor = downsample_factor
-
-        # Calculate exactly how many time steps make up our window after downsampling
         self.window_size = int((SAMPLE_RATE * window_duration) // downsample_factor)
         self.samples = []
         self._load_and_process()
@@ -170,52 +163,43 @@ class MEGPipelineDataset(Dataset):
         file_paths = list(self.folder_path.glob("*.h5"))
         for path in file_paths:
             label_str = parse_label(path.name)
-            if label_str not in TASK_LABELS:
-                continue
+            if label_str not in TASK_LABELS: continue
             label_idx = TASK_LABELS[label_str]
 
             with h5py.File(path, "r") as f:
                 d_name = get_dataset_name(path)
-                matrix = f[d_name][()]  # Shape: (248, 35624)
-
-                # 1. Downsample to optimize training speeds
+                matrix = f[d_name][()]
                 matrix = matrix[:, :: self.downsample_factor]
 
-                # 2. Time-wise Z-score normalization (Crucial step based on your EDA plot!)
+                # Time-wise Z-score normalization
                 mean = matrix.mean(axis=1, keepdims=True)
                 std = matrix.std(axis=1, keepdims=True) + 1e-8
                 matrix = (matrix - mean) / std
 
-                # 3. Sliding window slice engine
                 num_time_steps = matrix.shape[1]
                 for start in range(0, num_time_steps - self.window_size, self.window_size):
                     chunk = matrix[:, start : start + self.window_size]
                     self.samples.append((chunk, label_idx))
 
-    def __len__(self):
-        return len(self.samples)
-
+    def __len__(self): return len(self.samples)
     def __getitem__(self, idx):
         matrix, label = self.samples[idx]
-        # Tensor Shape: (Channels=1, Nodes=248, Time=window_size)
         return torch.tensor(matrix, dtype=torch.float32).unsqueeze(0), torch.tensor(label, dtype=torch.long)
 
-
-# --- 4. ST-GCN Model Architecture ---
+# --- 4. ST-GCN Network Architecture ---
 class SpatialGraphConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(SpatialGraphConv, self).__init__()
         self.linear = nn.Linear(in_channels, out_channels)
         
     def forward(self, x, A):
-        # x shape: (B, N, T, C)
         x = x.permute(0, 2, 1, 3)
         out = torch.einsum('btnd,nn->btnd', x, A)
         out = out.permute(0, 2, 1, 3)
         return self.linear(out)
 
 class STGCNBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, temporal_kernel=9):
+    def __init__(self, in_channels, out_channels, temporal_kernel=9, dropout=0.3):
         super(STGCNBlock, self).__init__()
         self.spatial_conv = SpatialGraphConv(in_channels, out_channels)
         self.temporal_conv = nn.Conv2d(
@@ -224,13 +208,14 @@ class STGCNBlock(nn.Module):
         )
         self.bn = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU()
+        self.dropout = nn.Dropout2d(dropout)  # Drop channels out systematically
 
     def forward(self, x, A):
-        x = x.permute(0, 2, 3, 1)  # to (B, N, T, C)
+        x = x.permute(0, 2, 3, 1)
         x = self.relu(self.spatial_conv(x, A))
-        x = x.permute(0, 3, 1, 2)  # back to (B, C, N, T)
+        x = x.permute(0, 3, 1, 2)
         x = self.temporal_conv(x)
-        return self.relu(self.bn(x))
+        return self.dropout(self.relu(self.bn(x)))
 
 class MEG_STGCN(nn.Module):
     def __init__(self, num_nodes=248, num_classes=4, hidden_dim=32):
@@ -242,14 +227,16 @@ class MEG_STGCN(nn.Module):
         self.fc = nn.Linear(hidden_dim * 2, num_classes)
 
     def forward(self, x):
-        A_adj = torch.sigmoid(self.A)  # Bound matrix parameters strictly between 0 and 1
+        # Apply element-wise dropout to the adjacency connections to combat overfitting
+        A_adj = torch.sigmoid(self.A)
+        A_adj = F.dropout(A_adj, p=0.2, training=self.training)
+        
         x = self.block1(x, A_adj)
         x = self.block2(x, A_adj)
         x = self.global_pool(x)
         return self.fc(torch.flatten(x, 1))
 
-
-# --- 5. Training Engine Block ---
+# --- Core Training Engine ---
 def run_epoch(model, loader, criterion, optimizer=None, device="cpu"):
     if optimizer:
         model.train()
@@ -280,35 +267,87 @@ def run_epoch(model, loader, criterion, optimizer=None, device="cpu"):
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"\nTraining execution engine online. Device target: {device}")
+    print(f"Target Compute Device: {device}")
 
-    # 1. Pipeline Dataset Loaders Initialization
-    print("Slicing and processing Intra-Subject Datasets...")
-    train_dataset = MEGPipelineDataset(INTRA_TRAIN, window_duration=1.0, downsample_factor=4)
+    # 1. Load your original base dataset collections
+    full_train_dataset = MEGPipelineDataset(INTRA_TRAIN, window_duration=1.0, downsample_factor=4)
     test_dataset = MEGPipelineDataset(INTRA_TEST, window_duration=1.0, downsample_factor=4)
 
-    # 2. RUNNING SANITY CHECK BEFORE EXTRACTION
-    print("\n=== RUNNING PIPELINE DATASET SANITY CHECK ===")
-    print(f"✔ Total extracted train window slices: {len(train_dataset)}")
-    print(f"✔ Total extracted test window slices:  {len(test_dataset)}")
+    # 2. Extract 20% of your training window slices exclusively for validation tuning
+    val_size = int(0.20 * len(full_train_dataset))
+    train_size = len(full_train_dataset) - val_size
     
-    if len(train_dataset) > 0:
-        sample_matrix, sample_label = train_dataset[0]
-        print(f"✔ Matrix Input Shape: {sample_matrix.shape} (Expected: [1, 248, 508])")
-        print(f"✔ Tensor Normalization Z-Score Check: Mean={sample_matrix.mean().item():.3f}, Std={sample_matrix.std().item():.3f}")
-    print("=============================================\n")
+    # Using a manual generator seed guarantees your splits don't change between runs
+    generator = torch.Generator().manual_seed(42)
+    train_dataset, val_dataset = torch.utils.data.random_split(
+        full_train_dataset, [train_size, val_size], generator=generator
+    )
 
+    print(f"✔ Dataset structural separation completed:")
+    print(f"   - Training chunks:   {len(train_dataset)}")
+    print(f"   - Validation chunks: {len(val_dataset)}")
+    print(f"   - Testing chunks:    {len(test_dataset)}")
+
+
+    # 3. Create your loaders (Notice the new val_loader)
     train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
 
-    # 3. Model Architecture Instantiation 
     model = MEG_STGCN(num_nodes=248, num_classes=4, hidden_dim=32).to(device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-3)
 
-    # 4. Standard Base Optimization Run Loops
-    print("Beginning Training Loops...")
-    for epoch in range(1, 4):
+    # Track validation metrics alongside training
+    history = {'train_loss': [], 'val_loss': [], 'train_acc': [], 'val_acc': []}
+    
+    print("\n=== STARTING TRAINING PROCESS ===")
+    
+    for epoch in range(1, EPOCHS + 1):
         train_loss, train_acc = run_epoch(model, train_loader, criterion, optimizer, device)
-        test_loss, test_acc = run_epoch(model, test_loader, criterion, optimizer=None, device=device)
-        print(f"Epoch {epoch:02d} | Train Acc: {train_acc*100:.1f}% (Loss: {train_loss:.4f}) | Test Acc: {test_acc*100:.1f}%")
+        val_loss, val_acc = run_epoch(model, val_loader, criterion, optimizer=None, device=device)
+        
+        history['train_loss'].append(train_loss)
+        history['val_loss'].append(val_loss)
+        history['train_acc'].append(train_acc)
+        history['val_acc'].append(val_acc)
+        
+        print(f"Epoch {epoch:02d}/{EPOCHS:02d} -> "
+              f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc*100:.1f}% || "
+              f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc*100:.1f}%")
+
+    # Final Isolated Holdout Test
+    print("\n=== HYPERPARAMETER TUNING LOCKED: RUNNING FINAL TEST SET ===")
+    final_test_loss, final_test_acc = run_epoch(model, test_loader, criterion, optimizer=None, device=device)
+    print(f"➔ [FINAL TEST PERFORMANCE] Accuracy: {final_test_acc*100:.2f}% | Loss: {final_test_loss:.4f}")
+
+    # --- Metrics Plotting (Completely Fixed & Synced) ---
+    epochs_range = range(1, EPOCHS + 1)
+    plt.figure(figsize=(12, 5))
+
+    # Plot Sub-Graph A: Loss Performance
+    plt.subplot(1, 2, 1)
+    plt.plot(epochs_range, history['train_loss'], label='Train Loss', color='#3f51b5', linewidth=2, marker='o')
+    plt.plot(epochs_range, history['val_loss'], label='Validation Loss', color='#f44336', linewidth=2, linestyle='--', marker='s')
+    plt.title('ST-GCN Categorical Cross Entropy Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss Value')
+    plt.grid(True, linestyle=':', alpha=0.6)
+    plt.legend(loc='upper right')
+
+    # Plot Sub-Graph B: Accuracy Performance
+    plt.subplot(1, 2, 2)
+    plt.plot(epochs_range, [acc * 100 for acc in history['train_acc']], label='Train Accuracy', color='#009688', linewidth=2, marker='o')
+    plt.plot(epochs_range, [acc * 100 for acc in history['val_acc']], label='Validation Accuracy', color='#ff9800', linewidth=2, linestyle='--', marker='s')
+    plt.title('Task Classification Accuracy Performance')
+    plt.xlabel('Epochs')
+    plt.ylabel('Accuracy Percentage (%)')
+    plt.grid(True, linestyle=':', alpha=0.6)
+    plt.legend(loc='lower right')
+
+    plt.tight_layout()
+    
+    output_image_path = Path("stgcn_loss_convergence_plot.png")
+    plt.savefig(output_image_path, dpi=150)
+    print(f"Analysis graph saved to: {output_image_path.resolve()}")
+    plt.show()
