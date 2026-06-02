@@ -47,9 +47,13 @@ TASK_LABELS = {
     "task_story_math": 2,
     "task_working_memory": 3,
 }
+
+OUTPUT_DIR = Path("results")
+OUTPUT_DIR.mkdir(exist_ok=True)
 LABEL_NAMES = {v: k for k, v in TASK_LABELS.items()}
 SAMPLE_RATE = 2034  # Hz
 EPOCHS = 5
+BATCH_SIZE = 16
 
 # --- Helper Functions ---
 def get_dataset_name(filepath):
@@ -69,6 +73,7 @@ def parse_label(filename):
     if "memory" in lowered or "working" in lowered:
         return "task_working_memory"
     return "unknown"
+
 
 # --- 1. Dataset exploration ---
 def scan_folder(folder_path, folder_name):
@@ -109,7 +114,6 @@ def scan_folder(folder_path, folder_name):
     return records
 
 
-# --- 1. Dataset exploration ---
 print("Scanning directories... This might take a minute if files are large.")
 all_metadata = []
 splits = {
@@ -130,7 +134,9 @@ for name, path in splits.items():
 df = pd.DataFrame(all_metadata)
 
 if df.empty:
-    print("❌ No data found. Please double check your paths or place sample files in the directories.")
+    print(
+        "No data found. Please double check your paths or place sample files in the directories."
+    )
     exit()
 
 # --- 2. Descriptive Summary Statistics ---
@@ -139,7 +145,9 @@ print(f"Total files discovered: {len(df)}")
 print(f"Unique tasks: {df['task'].unique()}")
 print("\n--- Sensor and Temporal Check ---")
 print(f"Unique sensor counts found: {df['sensors'].unique()} (Expected: [248])")
-print(f"Average time steps per file: {df['time_steps'].mean():.2f} (~{df['duration_sec'].mean():.1f} seconds)")
+print(
+    f"Average time steps per file: {df['time_steps'].mean():.2f} (~{df['duration_sec'].mean():.1f} seconds)"
+)
 
 print("\n--- Value Scale Verification ---")
 print(f"Global Minimum value observed: {df['min'].min():.2e} Tesla")
@@ -163,7 +171,8 @@ class MEGPipelineDataset(Dataset):
         file_paths = list(self.folder_path.glob("*.h5"))
         for path in file_paths:
             label_str = parse_label(path.name)
-            if label_str not in TASK_LABELS: continue
+            if label_str not in TASK_LABELS:
+                continue
             label_idx = TASK_LABELS[label_str]
 
             with h5py.File(path, "r") as f:
@@ -177,34 +186,44 @@ class MEGPipelineDataset(Dataset):
                 matrix = (matrix - mean) / std
 
                 num_time_steps = matrix.shape[1]
-                for start in range(0, num_time_steps - self.window_size, self.window_size):
+                for start in range(
+                    0, num_time_steps - self.window_size + 1, self.window_size
+                ):
                     chunk = matrix[:, start : start + self.window_size]
                     self.samples.append((chunk, label_idx))
 
-    def __len__(self): return len(self.samples)
+    def __len__(self):
+        return len(self.samples)
+
     def __getitem__(self, idx):
         matrix, label = self.samples[idx]
-        return torch.tensor(matrix, dtype=torch.float32).unsqueeze(0), torch.tensor(label, dtype=torch.long)
+        return torch.tensor(matrix, dtype=torch.float32).unsqueeze(0), torch.tensor(
+            label, dtype=torch.long
+        )
+
 
 # --- 4. ST-GCN Network Architecture ---
 class SpatialGraphConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(SpatialGraphConv, self).__init__()
         self.linear = nn.Linear(in_channels, out_channels)
-        
+
     def forward(self, x, A):
         x = x.permute(0, 2, 1, 3)
-        out = torch.einsum('btnd,nn->btnd', x, A)
+        out = torch.einsum("btnd,nn->btnd", x, A)
         out = out.permute(0, 2, 1, 3)
         return self.linear(out)
+
 
 class STGCNBlock(nn.Module):
     def __init__(self, in_channels, out_channels, temporal_kernel=9, dropout=0.3):
         super(STGCNBlock, self).__init__()
         self.spatial_conv = SpatialGraphConv(in_channels, out_channels)
         self.temporal_conv = nn.Conv2d(
-            in_channels=out_channels, out_channels=out_channels,
-            kernel_size=(1, temporal_kernel), padding=(0, temporal_kernel // 2)
+            in_channels=out_channels,
+            out_channels=out_channels,
+            kernel_size=(1, temporal_kernel),
+            padding=(0, temporal_kernel // 2),
         )
         self.bn = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU()
@@ -216,6 +235,7 @@ class STGCNBlock(nn.Module):
         x = x.permute(0, 3, 1, 2)
         x = self.temporal_conv(x)
         return self.dropout(self.relu(self.bn(x)))
+
 
 class MEG_STGCN(nn.Module):
     def __init__(self, num_nodes=248, num_classes=4, hidden_dim=32):
@@ -230,11 +250,12 @@ class MEG_STGCN(nn.Module):
         # Apply element-wise dropout to the adjacency connections to combat overfitting
         A_adj = torch.sigmoid(self.A)
         A_adj = F.dropout(A_adj, p=0.2, training=self.training)
-        
+
         x = self.block1(x, A_adj)
         x = self.block2(x, A_adj)
         x = self.global_pool(x)
         return self.fc(torch.flatten(x, 1))
+
 
 # --- Core Training Engine ---
 def run_epoch(model, loader, criterion, optimizer=None, device="cpu"):
@@ -270,56 +291,69 @@ if __name__ == "__main__":
     print(f"Target Compute Device: {device}")
 
     # 1. Load your original base dataset collections
-    full_train_dataset = MEGPipelineDataset(INTRA_TRAIN, window_duration=1.0, downsample_factor=4)
-    test_dataset = MEGPipelineDataset(INTRA_TEST, window_duration=1.0, downsample_factor=4)
+    full_train_dataset = MEGPipelineDataset(
+        INTRA_TRAIN, window_duration=1.0, downsample_factor=4
+    )
+    test_dataset = MEGPipelineDataset(
+        INTRA_TEST, window_duration=1.0, downsample_factor=4
+    )
 
-    # 2. Extract 20% of your training window slices exclusively for validation tuning
+    # 2. Extract 20% of training window slices exclusively for validation tuning
     val_size = int(0.20 * len(full_train_dataset))
     train_size = len(full_train_dataset) - val_size
-    
-    # Using a manual generator seed guarantees your splits don't change between runs
+
+    # Using a manual generator seed guarantees splits don't change between runs
     generator = torch.Generator().manual_seed(42)
     train_dataset, val_dataset = torch.utils.data.random_split(
         full_train_dataset, [train_size, val_size], generator=generator
     )
 
-    print(f"✔ Dataset structural separation completed:")
+    print(f" Dataset structural separation completed:")
     print(f"   - Training chunks:   {len(train_dataset)}")
     print(f"   - Validation chunks: {len(val_dataset)}")
     print(f"   - Testing chunks:    {len(test_dataset)}")
 
-
     # 3. Create your loaders (Notice the new val_loader)
-    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
     model = MEG_STGCN(num_nodes=248, num_classes=4, hidden_dim=32).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-3)
 
     # Track validation metrics alongside training
-    history = {'train_loss': [], 'val_loss': [], 'train_acc': [], 'val_acc': []}
-    
+    history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
+
     print("\n=== STARTING TRAINING PROCESS ===")
-    
+
     for epoch in range(1, EPOCHS + 1):
-        train_loss, train_acc = run_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss, val_acc = run_epoch(model, val_loader, criterion, optimizer=None, device=device)
-        
-        history['train_loss'].append(train_loss)
-        history['val_loss'].append(val_loss)
-        history['train_acc'].append(train_acc)
-        history['val_acc'].append(val_acc)
-        
-        print(f"Epoch {epoch:02d}/{EPOCHS:02d} -> "
-              f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc*100:.1f}% || "
-              f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc*100:.1f}%")
+        train_loss, train_acc = run_epoch(
+            model, train_loader, criterion, optimizer, device
+        )
+        val_loss, val_acc = run_epoch(
+            model, val_loader, criterion, optimizer=None, device=device
+        )
+
+        history["train_loss"].append(train_loss)
+        history["val_loss"].append(val_loss)
+        history["train_acc"].append(train_acc)
+        history["val_acc"].append(val_acc)
+
+        print(
+            f"Epoch {epoch:02d}/{EPOCHS:02d} -> "
+            f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc*100:.1f}% || "
+            f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc*100:.1f}%"
+        )
 
     # Final Isolated Holdout Test
     print("\n=== HYPERPARAMETER TUNING LOCKED: RUNNING FINAL TEST SET ===")
-    final_test_loss, final_test_acc = run_epoch(model, test_loader, criterion, optimizer=None, device=device)
-    print(f"➔ [FINAL TEST PERFORMANCE] Accuracy: {final_test_acc*100:.2f}% | Loss: {final_test_loss:.4f}")
+    final_test_loss, final_test_acc = run_epoch(
+        model, test_loader, criterion, optimizer=None, device=device
+    )
+    print(
+        f"➔ [FINAL TEST PERFORMANCE] Accuracy: {final_test_acc*100:.2f}% | Loss: {final_test_loss:.4f}"
+    )
 
     # --- Metrics Plotting (Completely Fixed & Synced) ---
     epochs_range = range(1, EPOCHS + 1)
@@ -327,27 +361,57 @@ if __name__ == "__main__":
 
     # Plot Sub-Graph A: Loss Performance
     plt.subplot(1, 2, 1)
-    plt.plot(epochs_range, history['train_loss'], label='Train Loss', color='#3f51b5', linewidth=2, marker='o')
-    plt.plot(epochs_range, history['val_loss'], label='Validation Loss', color='#f44336', linewidth=2, linestyle='--', marker='s')
-    plt.title('ST-GCN Categorical Cross Entropy Loss')
-    plt.xlabel('Epochs')
-    plt.ylabel('Loss Value')
-    plt.grid(True, linestyle=':', alpha=0.6)
-    plt.legend(loc='upper right')
+    plt.plot(
+        epochs_range,
+        history["train_loss"],
+        label="Train Loss",
+        color="#3f51b5",
+        linewidth=2,
+        marker="o",
+    )
+    plt.plot(
+        epochs_range,
+        history["val_loss"],
+        label="Validation Loss",
+        color="#f44336",
+        linewidth=2,
+        linestyle="--",
+        marker="s",
+    )
+    plt.title("ST-GCN Categorical Cross Entropy Loss")
+    plt.xlabel("Epochs")
+    plt.ylabel("Loss Value")
+    plt.grid(True, linestyle=":", alpha=0.6)
+    plt.legend(loc="upper right")
 
     # Plot Sub-Graph B: Accuracy Performance
     plt.subplot(1, 2, 2)
-    plt.plot(epochs_range, [acc * 100 for acc in history['train_acc']], label='Train Accuracy', color='#009688', linewidth=2, marker='o')
-    plt.plot(epochs_range, [acc * 100 for acc in history['val_acc']], label='Validation Accuracy', color='#ff9800', linewidth=2, linestyle='--', marker='s')
-    plt.title('Task Classification Accuracy Performance')
-    plt.xlabel('Epochs')
-    plt.ylabel('Accuracy Percentage (%)')
-    plt.grid(True, linestyle=':', alpha=0.6)
-    plt.legend(loc='lower right')
+    plt.plot(
+        epochs_range,
+        [acc * 100 for acc in history["train_acc"]],
+        label="Train Accuracy",
+        color="#009688",
+        linewidth=2,
+        marker="o",
+    )
+    plt.plot(
+        epochs_range,
+        [acc * 100 for acc in history["val_acc"]],
+        label="Validation Accuracy",
+        color="#ff9800",
+        linewidth=2,
+        linestyle="--",
+        marker="s",
+    )
+    plt.title("Task Classification Accuracy Performance")
+    plt.xlabel("Epochs")
+    plt.ylabel("Accuracy Percentage (%)")
+    plt.grid(True, linestyle=":", alpha=0.6)
+    plt.legend(loc="lower right")
 
     plt.tight_layout()
-    
-    output_image_path = Path("stgcn_loss_convergence_plot.png")
-    plt.savefig(output_image_path, dpi=150)
-    print(f"Analysis graph saved to: {output_image_path.resolve()}")
+
+    #dpi is set to 150 for sharper images, especially when zooming in on details
+    plt.savefig(OUTPUT_DIR / "stgcn_loss_convergence_plot.png", dpi=150)
+    print(f"Analysis graph saved to: {OUTPUT_DIR / 'stgcn_loss_convergence_plot.png'}")
     plt.show()
